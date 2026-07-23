@@ -5,6 +5,34 @@ from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field
 
 
+class SendCodeRequest(BaseModel):
+    email: EmailStr = Field(..., description="인증 메일을 받을 주소", examples=["user@example.com"])
+
+
+class SendCodeResponse(BaseModel):
+    email: str
+    message: str = "인증번호를 이메일로 발송했습니다. 5분 내에 입력해 주세요."
+    expires_in_seconds: int = 300
+
+
+class VerifyCodeRequest(BaseModel):
+    email: EmailStr = Field(..., description="인증할 이메일")
+    code: str = Field(
+        ...,
+        min_length=6,
+        max_length=6,
+        pattern=r"^\d{6}$",
+        description="6자리 숫자 인증번호",
+        examples=["123456"],
+    )
+
+
+class VerifyCodeResponse(BaseModel):
+    email: str
+    verified: bool = True
+    message: str = "이메일 인증이 완료되었습니다. API Key를 발급받을 수 있습니다."
+
+
 class IssueKeyRequest(BaseModel):
     email: EmailStr = Field(..., description="발급받을 이메일 주소", examples=["user@example.com"])
 

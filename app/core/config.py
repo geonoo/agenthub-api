@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # Open DART
     dart_api_key: str = ""
 
+    # Resend email (verification codes)
+    resend_api_key: str = ""
+    email_from: str = "AgentHub <auth@agenthub.co.kr>"
+    email_code_ttl_minutes: int = 5
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

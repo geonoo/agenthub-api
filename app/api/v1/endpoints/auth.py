@@ -1,4 +1,4 @@
-"""API Key self-service issuance and usage endpoints."""
+"""API Key self-service issuance, email verification, and usage endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader
@@ -6,11 +6,52 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.schemas.auth import IssueKeyRequest, IssueKeyResponse, UsageResponse
-from app.services import key_service
+from app.schemas.auth import (
+    IssueKeyRequest,
+    IssueKeyResponse,
+    SendCodeRequest,
+    SendCodeResponse,
+    UsageResponse,
+    VerifyCodeRequest,
+    VerifyCodeResponse,
+)
+from app.services import email_service, key_service
 
 router = APIRouter()
 api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
+
+
+@router.post(
+    "/send-code",
+    response_model=SendCodeResponse,
+    summary="Send email verification code",
+    description="Generate a 6-digit code, store it for 5 minutes, and email via Resend.",
+)
+def send_code(
+    body: SendCodeRequest,
+    db: Session = Depends(get_db),
+) -> SendCodeResponse:
+    settings = get_settings()
+    row = email_service.create_verification(db, str(body.email))
+    email_service.send_verification_email(row.email, row.code)
+    return SendCodeResponse(
+        email=row.email,
+        expires_in_seconds=settings.email_code_ttl_minutes * 60,
+    )
+
+
+@router.post(
+    "/verify-code",
+    response_model=VerifyCodeResponse,
+    summary="Verify email code",
+    description="Validate the 6-digit code before API key issuance.",
+)
+def verify_code(
+    body: VerifyCodeRequest,
+    db: Session = Depends(get_db),
+) -> VerifyCodeResponse:
+    row = email_service.verify_code(db, str(body.email), body.code)
+    return VerifyCodeResponse(email=row.email, verified=True)
 
 
 @router.post(
@@ -18,7 +59,7 @@ api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
     response_model=IssueKeyResponse,
     summary="Issue a new AgentHub API Key",
     description=(
-        "Create a Free-tier API key for the given email. "
+        "Issue a Free-tier API key only after the email has been verified via /verify-code. "
         "The raw key is returned only once; store it securely."
     ),
 )
@@ -26,7 +67,9 @@ def issue_key(
     body: IssueKeyRequest,
     db: Session = Depends(get_db),
 ) -> IssueKeyResponse:
+    email_service.require_verified_email(db, str(body.email))
     raw, row, user = key_service.issue_api_key(db, str(body.email))
+    email_service.consume_verification(db, user.email)
     return IssueKeyResponse(
         email=user.email,
         api_key=raw,
@@ -54,7 +97,6 @@ def get_usage(
         )
 
     if api_key in settings.env_api_keys:
-        # Env/master keys: unlimited
         return UsageResponse(
             key_prefix=api_key[:12],
             plan="master",

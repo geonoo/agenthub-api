@@ -1,20 +1,33 @@
-"""Lightweight MCP (Model Context Protocol) HTTP/JSON-RPC + SSE interface.
+"""MCP HTTP+SSE transport (legacy) + JSON-RPC helpers.
 
-Handshake paths are auth-exempt (see security middleware) so Claude Desktop /
-mcp-remote can complete `initialize` without blocking on API-key or SQLite.
+SSE transport contract (mcp-remote / Claude Desktop):
+1. Client GET /mcp/sse  → long-lived SSE stream
+2. Server sends `event: endpoint` with `/mcp/messages?session_id=...`
+3. Client POST JSON-RPC to that URL
+4. Server returns HTTP 202; actual JSON-RPC *result* is pushed on the SSE
+   stream as `event: message` (session-correlated)
+
+Direct POST /mcp still returns JSON in the HTTP body for simple clients/tests.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
+import secrets
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.services.dart_service import DartService, get_dart_service
 from app.services.finance_service import FinanceService, get_finance_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -24,6 +37,9 @@ SERVER_INFO = {
 }
 
 PROTOCOL_VERSION = "2024-11-05"
+
+# Session TTL / cleanup
+_SESSION_TTL_SECONDS = 600
 
 TOOLS: list[dict[str, Any]] = [
     {
@@ -79,6 +95,63 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+@dataclass
+class SseSession:
+    session_id: str
+    queue: asyncio.Queue[str | None] = field(default_factory=asyncio.Queue)
+    created_at: float = field(default_factory=time.monotonic)
+
+
+class SseSessionHub:
+    """In-memory session registry linking POST /messages → GET /sse stream."""
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, SseSession] = {}
+        self._lock = asyncio.Lock()
+
+    async def create(self) -> SseSession:
+        await self._cleanup_expired()
+        session_id = secrets.token_urlsafe(16)
+        session = SseSession(session_id=session_id)
+        async with self._lock:
+            self._sessions[session_id] = session
+        logger.info("MCP SSE session created: %s", session_id)
+        return session
+
+    async def get(self, session_id: str) -> SseSession | None:
+        async with self._lock:
+            return self._sessions.get(session_id)
+
+    async def publish(self, session_id: str, payload: dict[str, Any]) -> bool:
+        session = await self.get(session_id)
+        if not session:
+            return False
+        data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        await session.queue.put(f"event: message\ndata: {data}\n\n")
+        return True
+
+    async def close(self, session_id: str) -> None:
+        async with self._lock:
+            session = self._sessions.pop(session_id, None)
+        if session:
+            await session.queue.put(None)
+            logger.info("MCP SSE session closed: %s", session_id)
+
+    async def _cleanup_expired(self) -> None:
+        now = time.monotonic()
+        async with self._lock:
+            expired = [
+                sid
+                for sid, s in self._sessions.items()
+                if now - s.created_at > _SESSION_TTL_SECONDS
+            ]
+            for sid in expired:
+                self._sessions.pop(sid, None)
+
+
+sse_hub = SseSessionHub()
+
+
 class JsonRpcRequest(BaseModel):
     jsonrpc: str = Field("2.0", description="JSON-RPC version")
     id: str | int | None = Field(None, description="Request id")
@@ -103,7 +176,6 @@ def _rpc_error(
 
 
 def _initialize_result() -> dict[str, Any]:
-    """Pure in-memory handshake payload — no DB / no I/O."""
     return {
         "protocolVersion": PROTOCOL_VERSION,
         "capabilities": {"tools": {"listChanged": False}},
@@ -156,7 +228,6 @@ async def handle_mcp_method(
 ) -> Any:
     params = params or {}
 
-    # Handshake / discovery — never touch DB or upstream services
     if method in {"initialize", "mcp/initialize"}:
         return _initialize_result()
 
@@ -165,7 +236,7 @@ async def handle_mcp_method(
         "initialized",
         "notifications/cancelled",
     }:
-        return {}
+        return None  # notification — no result body
 
     if method in {"ping", "mcp/ping"}:
         return {}
@@ -185,72 +256,138 @@ async def handle_mcp_method(
     raise ValueError(f"Unsupported method: {method}")
 
 
-async def _dispatch_jsonrpc(payload: JsonRpcRequest) -> JSONResponse:
-    """Route JSON-RPC; skip service DI for handshake methods."""
-    method = payload.method
-    is_handshake = method in {
-        "initialize",
-        "mcp/initialize",
-        "notifications/initialized",
-        "initialized",
-        "notifications/cancelled",
-        "ping",
-        "mcp/ping",
-        "tools/list",
-        "mcp/tools/list",
-    }
+_HANDSHAKE_METHODS = {
+    "initialize",
+    "mcp/initialize",
+    "notifications/initialized",
+    "initialized",
+    "notifications/cancelled",
+    "ping",
+    "mcp/ping",
+    "tools/list",
+    "mcp/tools/list",
+}
+
+
+async def process_jsonrpc_dict(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Process one JSON-RPC object. Returns response dict, or None for notifications."""
+    req_id = payload.get("id")
+    method = str(payload.get("method") or "")
+    params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+    is_notification = "id" not in payload or payload.get("id") is None
+
+    # Pure notifications without method responses
+    if method.startswith("notifications/") or method in {"initialized"}:
+        if is_notification or req_id is None:
+            await handle_mcp_method(method, params)
+            return None
 
     try:
-        if is_handshake:
-            result = await handle_mcp_method(method, payload.params)
-            # notifications may have id=null — still return 202-style empty OK
-            if payload.id is None and method.startswith("notifications/"):
-                return JSONResponse({"jsonrpc": "2.0", "result": result})
-            return JSONResponse(_rpc_result(payload.id, result))
+        if method in _HANDSHAKE_METHODS and method not in {
+            "tools/call",
+            "mcp/tools/call",
+        }:
+            result = await handle_mcp_method(method, params)
+            if result is None or (
+                is_notification and method.startswith("notifications/")
+            ):
+                return None
+            return _rpc_result(req_id, result)
 
         dart_service = get_dart_service()
         finance_service = get_finance_service()
         result = await handle_mcp_method(
-            method,
-            payload.params,
-            dart_service,
-            finance_service,
+            method, params, dart_service, finance_service
         )
-        return JSONResponse(_rpc_result(payload.id, result))
+        if result is None:
+            return None
+        return _rpc_result(req_id, result)
     except Exception as exc:  # noqa: BLE001
-        return JSONResponse(
-            _rpc_error(payload.id, -32000, str(exc)),
-            status_code=200,
-        )
+        if is_notification:
+            logger.warning("MCP notification error (%s): %s", method, exc)
+            return None
+        return _rpc_error(req_id, -32000, str(exc))
+
+
+async def _dispatch_jsonrpc_http(payload: JsonRpcRequest) -> JSONResponse:
+    """Direct HTTP JSON response (non-SSE clients / tests)."""
+    raw = payload.model_dump()
+    response = await process_jsonrpc_dict(raw)
+    if response is None:
+        return JSONResponse({"jsonrpc": "2.0", "result": {}}, status_code=200)
+    return JSONResponse(response)
 
 
 @router.post(
     "",
-    summary="MCP JSON-RPC endpoint",
-    description=(
-        "MCP JSON-RPC endpoint (initialize / tools/list / tools/call). "
-        "Auth-exempt for Claude Desktop handshake; optional X-API-KEY still accepted."
-    ),
-    include_in_schema=True,
+    summary="MCP JSON-RPC endpoint (direct HTTP)",
+    description="Returns JSON-RPC result in the HTTP body. Prefer SSE for Claude Desktop.",
 )
 async def mcp_jsonrpc(payload: JsonRpcRequest) -> JSONResponse:
-    return await _dispatch_jsonrpc(payload)
+    return await _dispatch_jsonrpc_http(payload)
 
 
 @router.post(
     "/messages",
     summary="MCP SSE message endpoint",
-    description="JSON-RPC message sink used by MCP SSE transport (mcp-remote).",
-    include_in_schema=True,
+    description=(
+        "Client→server JSON-RPC sink for SSE transport. "
+        "Requires session_id query param from the SSE `endpoint` event. "
+        "Returns 202; JSON-RPC responses are delivered on the SSE stream."
+    ),
 )
-async def mcp_messages(payload: JsonRpcRequest) -> JSONResponse:
-    return await _dispatch_jsonrpc(payload)
+async def mcp_messages(request: Request) -> Response:
+    session_id = (
+        request.query_params.get("session_id")
+        or request.query_params.get("sessionId")
+        or ""
+    ).strip()
+    if not session_id:
+        return JSONResponse(
+            {"detail": "session_id query parameter is required"},
+            status_code=400,
+        )
+
+    session = await sse_hub.get(session_id)
+    if not session:
+        return JSONResponse(
+            {"detail": f"Unknown or expired SSE session: {session_id}"},
+            status_code=404,
+        )
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"detail": "Invalid JSON body"}, status_code=400)
+
+    # Support single object or batch array
+    messages = body if isinstance(body, list) else [body]
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        method = msg.get("method", "")
+        logger.info(
+            "MCP SSE message session=%s method=%s id=%s",
+            session_id,
+            method,
+            msg.get("id"),
+        )
+        rpc_response = await process_jsonrpc_dict(msg)
+        if rpc_response is not None:
+            ok = await sse_hub.publish(session_id, rpc_response)
+            if not ok:
+                return JSONResponse(
+                    {"detail": "SSE session gone"},
+                    status_code=404,
+                )
+
+    # Spec: accept POST; deliver results via SSE
+    return Response(status_code=202)
 
 
 @router.get(
     "/tools",
     summary="List MCP tools",
-    description="Convenience REST view of MCP tools (same catalog as tools/list).",
 )
 async def list_mcp_tools() -> dict[str, Any]:
     return {"tools": TOOLS, "server": SERVER_INFO}
@@ -259,7 +396,6 @@ async def list_mcp_tools() -> dict[str, Any]:
 @router.get(
     "/schema",
     summary="MCP tools JSON schema",
-    description="Tool input schemas for MCP / agent discovery.",
 )
 async def mcp_schema() -> dict[str, Any]:
     return {
@@ -273,26 +409,36 @@ async def mcp_schema() -> dict[str, Any]:
     "/sse",
     summary="MCP SSE handshake",
     description=(
-        "Server-Sent Events stream for MCP clients. Immediately emits an "
-        "`endpoint` event pointing at POST /mcp/messages (no DB, no auth)."
+        "Opens an SSE stream, creates a session, and emits `endpoint` with "
+        "`/mcp/messages?session_id=...`. Subsequent JSON-RPC responses are "
+        "pushed as `event: message` on this stream."
     ),
 )
 async def mcp_sse(request: Request) -> StreamingResponse:
-    # Prefer absolute path under the same mount prefix the client used
     base = request.url.path.rsplit("/sse", 1)[0] or "/mcp"
-    messages_path = f"{base}/messages"
+    session = await sse_hub.create()
+    messages_path = f"{base}/messages?session_id={session.session_id}"
 
     async def event_stream():
-        # First event must be immediate for mcp-remote handshake
+        # 1) Mandatory first event — tells client where to POST
         yield f"event: endpoint\ndata: {messages_path}\n\n"
         try:
             while True:
                 if await request.is_disconnected():
                     break
-                await asyncio.sleep(1)
-                yield ": ping\n\n"
+                try:
+                    item = await asyncio.wait_for(session.queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    # keep-alive comment
+                    yield ": ping\n\n"
+                    continue
+                if item is None:
+                    break
+                yield item
         except asyncio.CancelledError:
             return
+        finally:
+            await sse_hub.close(session.session_id)
 
     return StreamingResponse(
         event_stream(),

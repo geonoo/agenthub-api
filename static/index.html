@@ -333,21 +333,42 @@ HTML이 아닌 Clean Markdown/JSON만 요약에 사용하고, 출처(접수번�
     <div id="key-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
     <div class="relative w-full max-w-lg rounded-2xl border border-white/10 bg-ink-900 p-6 sm:p-8 shadow-glow">
       <button type="button" id="close-key-modal" class="absolute right-4 top-4 text-slate-500 hover:text-white text-xl leading-none">&times;</button>
-      <h3 class="text-xl font-semibold text-white">API Key 즉시 발급</h3>
-      <p class="mt-2 text-sm text-slate-400">이메일만 입력하면 Free Tier 키(일 1,000회)가 발급됩니다. 키는 한 번만 보여집니다.</p>
+      <h3 class="text-xl font-semibold text-white">API Key 발급</h3>
+      <p class="mt-2 text-sm text-slate-400">이메일 인증 후 Free Tier 키(일 1,000회)를 발급합니다. 키는 한 번만 보여집니다.</p>
 
-      <form id="issue-key-form" class="mt-6 space-y-4">
+      <div id="issue-key-form" class="mt-6 space-y-4">
         <div>
           <label for="issue-email" class="block text-xs text-slate-500 mb-1">Email</label>
-          <input id="issue-email" type="email" required placeholder="you@example.com"
-            class="w-full rounded-xl border border-white/10 bg-ink-950 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-accent/40" />
+          <div class="flex gap-2">
+            <input id="issue-email" type="email" required placeholder="you@example.com"
+              class="min-w-0 flex-1 rounded-xl border border-white/10 bg-ink-950 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-accent/40" />
+            <button type="button" id="send-code-btn"
+              class="shrink-0 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 text-sm font-medium text-accent hover:bg-accent/20 transition-colors">
+              인증번호 전송
+            </button>
+          </div>
         </div>
-        <button type="submit" id="issue-submit"
-          class="w-full rounded-xl bg-accent py-3 text-sm font-semibold text-ink-950 hover:bg-accent-dim transition-colors">
-          API Key 발급
+
+        <div id="code-step" class="hidden space-y-3">
+          <label for="issue-code" class="block text-xs text-slate-500 mb-1">인증번호 (6자리)</label>
+          <div class="flex gap-2">
+            <input id="issue-code" type="text" inputmode="numeric" maxlength="6" placeholder="123456"
+              class="min-w-0 flex-1 rounded-xl border border-white/10 bg-ink-950 px-4 py-3 text-sm tracking-[0.3em] text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-accent/40" />
+            <button type="button" id="verify-code-btn"
+              class="shrink-0 rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm font-medium text-slate-200 hover:border-accent/40 hover:text-white transition-colors">
+              인증 확인
+            </button>
+          </div>
+          <p id="verify-ok" class="hidden text-xs text-accent">이메일 인증 완료. 이제 키를 발급할 수 있습니다.</p>
+        </div>
+
+        <button type="button" id="issue-submit" disabled
+          class="w-full rounded-xl bg-accent/40 py-3 text-sm font-semibold text-ink-950 cursor-not-allowed transition-colors disabled:opacity-50">
+          API Key 발급받기
         </button>
         <p id="issue-error" class="hidden text-sm text-red-400"></p>
-      </form>
+        <p id="issue-info" class="hidden text-sm text-slate-400"></p>
+      </div>
 
       <div id="issue-result" class="mt-6 hidden space-y-4">
         <div>
@@ -390,6 +411,40 @@ HTML이 아닌 Clean Markdown/JSON만 요약에 사용하고, 출처(접수번�
     const openers = [document.getElementById("open-key-modal"), document.getElementById("open-key-modal-hero")];
     const closeBtn = document.getElementById("close-key-modal");
     const backdrop = document.getElementById("key-modal-backdrop");
+    const errEl = document.getElementById("issue-error");
+    const infoEl = document.getElementById("issue-info");
+    const resultEl = document.getElementById("issue-result");
+    const keyEl = document.getElementById("issued-key");
+    const mcpEl = document.getElementById("mcp-snippet");
+    const codeStep = document.getElementById("code-step");
+    const verifyOk = document.getElementById("verify-ok");
+    const issueSubmit = document.getElementById("issue-submit");
+    let emailVerified = false;
+
+    function showErr(msg) {
+      errEl.textContent = typeof msg === "string" ? msg : (msg?.detail || String(msg));
+      if (Array.isArray(msg?.detail)) errEl.textContent = msg.detail.map((d) => d.msg || d).join(", ");
+      errEl.classList.remove("hidden");
+      infoEl.classList.add("hidden");
+    }
+    function showInfo(msg) {
+      infoEl.textContent = msg;
+      infoEl.classList.remove("hidden");
+      errEl.classList.add("hidden");
+    }
+    function clearMsgs() {
+      errEl.classList.add("hidden");
+      infoEl.classList.add("hidden");
+    }
+    function setIssueEnabled(on) {
+      emailVerified = on;
+      issueSubmit.disabled = !on;
+      if (on) {
+        issueSubmit.className = "w-full rounded-xl bg-accent py-3 text-sm font-semibold text-ink-950 hover:bg-accent-dim transition-colors";
+      } else {
+        issueSubmit.className = "w-full rounded-xl bg-accent/40 py-3 text-sm font-semibold text-ink-950 cursor-not-allowed transition-colors disabled:opacity-50";
+      }
+    }
 
     function openModal() {
       modal.classList.remove("hidden");
@@ -403,27 +458,82 @@ HTML이 아닌 Clean Markdown/JSON만 요약에 사용하고, 출처(접수번�
     closeBtn.addEventListener("click", closeModal);
     backdrop.addEventListener("click", closeModal);
 
-    const form = document.getElementById("issue-key-form");
-    const errEl = document.getElementById("issue-error");
-    const resultEl = document.getElementById("issue-result");
-    const keyEl = document.getElementById("issued-key");
-    const mcpEl = document.getElementById("mcp-snippet");
+    async function parseError(res) {
+      try {
+        const data = await res.json();
+        if (typeof data.detail === "string") return data.detail;
+        if (Array.isArray(data.detail)) return data.detail.map((d) => d.msg || JSON.stringify(d)).join(", ");
+        return data.message || "요청 실패";
+      } catch (_) {
+        return "요청 실패";
+      }
+    }
 
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      errEl.classList.add("hidden");
+    document.getElementById("send-code-btn").addEventListener("click", async () => {
+      clearMsgs();
       const email = document.getElementById("issue-email").value.trim();
-      const submit = document.getElementById("issue-submit");
-      submit.disabled = true;
-      submit.textContent = "발급 중…";
+      if (!email) return showErr("이메일을 입력하세요.");
+      const btn = document.getElementById("send-code-btn");
+      btn.disabled = true;
+      btn.textContent = "전송 중…";
+      setIssueEnabled(false);
+      verifyOk.classList.add("hidden");
+      try {
+        const res = await fetch("/api/v1/auth/send-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        if (!res.ok) throw new Error(await parseError(res));
+        codeStep.classList.remove("hidden");
+        showInfo("인증번호를 발송했습니다. 메일함을 확인해 주세요 (5분 유효).");
+      } catch (err) {
+        showErr(err.message || String(err));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "인증번호 전송";
+      }
+    });
+
+    document.getElementById("verify-code-btn").addEventListener("click", async () => {
+      clearMsgs();
+      const email = document.getElementById("issue-email").value.trim();
+      const code = document.getElementById("issue-code").value.trim();
+      if (!email || !code) return showErr("이메일과 인증번호를 입력하세요.");
+      const btn = document.getElementById("verify-code-btn");
+      btn.disabled = true;
+      try {
+        const res = await fetch("/api/v1/auth/verify-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, code }),
+        });
+        if (!res.ok) throw new Error(await parseError(res));
+        verifyOk.classList.remove("hidden");
+        setIssueEnabled(true);
+        showInfo("인증 성공. API Key를 발급받을 수 있습니다.");
+      } catch (err) {
+        setIssueEnabled(false);
+        showErr(err.message || String(err));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    issueSubmit.addEventListener("click", async () => {
+      if (!emailVerified) return;
+      clearMsgs();
+      const email = document.getElementById("issue-email").value.trim();
+      issueSubmit.disabled = true;
+      issueSubmit.textContent = "발급 중…";
       try {
         const res = await fetch("/api/v1/auth/issue-key", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email }),
         });
+        if (!res.ok) throw new Error(await parseError(res));
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || "발급 실패");
         const key = data.api_key;
         keyEl.textContent = key;
         mcpEl.textContent = JSON.stringify({
@@ -441,13 +551,14 @@ HTML이 아닌 Clean Markdown/JSON만 요약에 사용하고, 출처(접수번�
           }
         }, null, 2);
         resultEl.classList.remove("hidden");
+        setIssueEnabled(false);
         try { localStorage.setItem("agenthub_api_key", key); } catch (_) {}
+        showInfo("발급 완료. 키를 안전한 곳에 복사해 두세요.");
       } catch (err) {
-        errEl.textContent = err.message || String(err);
-        errEl.classList.remove("hidden");
+        showErr(err.message || String(err));
+        setIssueEnabled(true);
       } finally {
-        submit.disabled = false;
-        submit.textContent = "API Key 발급";
+        issueSubmit.textContent = "API Key 발급받기";
       }
     });
 

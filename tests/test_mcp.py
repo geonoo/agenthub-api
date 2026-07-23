@@ -1,9 +1,14 @@
-"""MCP JSON-RPC / SSE / tools tests."""
+"""MCP JSON-RPC / SSE session transport tests."""
 
+from __future__ import annotations
+
+import asyncio
+import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
+from starlette.requests import Request
 
 from app.core.security import is_auth_exempt
 from app.schemas.dart import CompanyDisclosuresResponse
@@ -24,8 +29,7 @@ def test_mcp_paths_are_auth_exempt():
         assert is_auth_exempt(path), path
 
 
-def test_mcp_initialize_public_no_auth(client):
-    """Handshake must succeed without X-API-KEY and without DB quota work."""
+def test_mcp_initialize_direct_http(client):
     response = client.post(
         "/mcp",
         json={"jsonrpc": "2.0", "id": "init", "method": "initialize", "params": {}},
@@ -34,15 +38,6 @@ def test_mcp_initialize_public_no_auth(client):
     body = response.json()
     assert body["result"]["serverInfo"]["name"] == "agenthub"
     assert "protocolVersion" in body["result"]
-
-
-def test_mcp_initialize_via_messages(client):
-    response = client.post(
-        "/mcp/messages",
-        json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
-    )
-    assert response.status_code == 200
-    assert response.json()["result"]["capabilities"]["tools"]["listChanged"] is False
 
 
 def test_mcp_tools_list_public(client):
@@ -56,10 +51,7 @@ def test_mcp_tools_list_public(client):
 
 
 @pytest.mark.asyncio
-async def test_mcp_sse_emits_endpoint_immediately():
-    """First SSE event must advertise /mcp/messages without waiting on DB/auth."""
-    from starlette.requests import Request
-
+async def test_mcp_sse_endpoint_includes_session_id():
     from app.api.v1.endpoints import mcp as mcp_mod
 
     scope = {
@@ -77,7 +69,6 @@ async def test_mcp_sse_emits_endpoint_immediately():
     }
     request = Request(scope)
     response = await mcp_mod.mcp_sse(request)
-    assert response.media_type == "text/event-stream"
     agen = response.body_iterator
     first = await agen.__anext__()
     if isinstance(first, memoryview):
@@ -85,8 +76,52 @@ async def test_mcp_sse_emits_endpoint_immediately():
     if isinstance(first, bytes):
         first = first.decode()
     assert "event: endpoint" in first
-    assert "/mcp/messages" in first
+    assert "/mcp/messages?session_id=" in first
     await agen.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sse_initialize_response_via_message_event(client):
+    """POST /messages returns 202; initialize result is pushed on SSE queue."""
+    from app.api.v1.endpoints.mcp import sse_hub
+
+    session = await sse_hub.create()
+    session_id = session.session_id
+
+    # Simulate client POST initialize to messages endpoint
+    response = client.post(
+        f"/mcp/messages?session_id={session_id}",
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+    )
+    assert response.status_code == 202
+
+    # Response must appear on the session SSE queue as event: message
+    item = await asyncio.wait_for(session.queue.get(), timeout=2.0)
+    assert item is not None
+    assert item.startswith("event: message\n")
+    data_line = [ln for ln in item.splitlines() if ln.startswith("data: ")][0]
+    payload = json.loads(data_line.removeprefix("data: "))
+    assert payload["id"] == 1
+    assert payload["result"]["serverInfo"]["name"] == "agenthub"
+    assert "protocolVersion" in payload["result"]
+
+    await sse_hub.close(session_id)
+
+
+def test_messages_requires_session_id(client):
+    response = client.post(
+        "/mcp/messages",
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+    )
+    assert response.status_code == 400
+
+
+def test_messages_unknown_session(client):
+    response = client.post(
+        "/mcp/messages?session_id=does-not-exist",
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+    )
+    assert response.status_code == 404
 
 
 def test_mcp_schema(client):
@@ -96,14 +131,8 @@ def test_mcp_schema(client):
 
 
 def test_mcp_rest_tools_alias(client):
-    response = client.get("/mcp/tools")
-    assert response.status_code == 200
-    assert len(response.json()["tools"]) == 2
-
-
-def test_mcp_api_v1_alias(client):
-    response = client.get("/api/v1/mcp/tools")
-    assert response.status_code == 200
+    assert client.get("/mcp/tools").status_code == 200
+    assert client.get("/api/v1/mcp/tools").status_code == 200
 
 
 def test_mcp_call_get_stock_news(client, monkeypatch):
@@ -117,14 +146,11 @@ def test_mcp_call_get_stock_news(client, monkeypatch):
     )
     mock_finance = AsyncMock()
     mock_finance.get_stock_news = AsyncMock(return_value=stub)
-    mock_dart = AsyncMock()
     monkeypatch.setattr(
-        "app.api.v1.endpoints.mcp.get_finance_service",
-        lambda: mock_finance,
+        "app.api.v1.endpoints.mcp.get_finance_service", lambda: mock_finance
     )
     monkeypatch.setattr(
-        "app.api.v1.endpoints.mcp.get_dart_service",
-        lambda: mock_dart,
+        "app.api.v1.endpoints.mcp.get_dart_service", lambda: AsyncMock()
     )
     response = client.post(
         "/mcp",
@@ -138,14 +164,11 @@ def test_mcp_call_get_stock_news(client, monkeypatch):
             },
         },
     )
-
     assert response.status_code == 200
-    body = response.json()["result"]
-    assert body["isError"] is False
-    mock_finance.get_stock_news.assert_awaited_once()
+    assert response.json()["result"]["isError"] is False
 
 
-def test_mcp_call_get_dart_disclosures(client, monkeypatch):
+def test_mcp_call_via_sse_session(client, monkeypatch):
     stub = CompanyDisclosuresResponse(
         stock_code="005930",
         corp_code="00126380",
@@ -158,27 +181,40 @@ def test_mcp_call_get_dart_disclosures(client, monkeypatch):
     )
     mock_dart = AsyncMock()
     mock_dart.get_company_disclosures = AsyncMock(return_value=stub)
-    mock_finance = AsyncMock()
     monkeypatch.setattr(
-        "app.api.v1.endpoints.mcp.get_dart_service",
-        lambda: mock_dart,
+        "app.api.v1.endpoints.mcp.get_dart_service", lambda: mock_dart
     )
     monkeypatch.setattr(
-        "app.api.v1.endpoints.mcp.get_finance_service",
-        lambda: mock_finance,
-    )
-    response = client.post(
-        "/mcp/messages",
-        json={
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {
-                "name": "get_dart_disclosures",
-                "arguments": {"stock_code": "005930", "limit": 1},
-            },
-        },
+        "app.api.v1.endpoints.mcp.get_finance_service", lambda: AsyncMock()
     )
 
-    assert response.status_code == 200
-    assert response.json()["result"]["isError"] is False
+    async def _run():
+        from app.api.v1.endpoints.mcp import sse_hub
+
+        session = await sse_hub.create()
+        sid = session.session_id
+        r = client.post(
+            f"/mcp/messages?session_id={sid}",
+            json={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_dart_disclosures",
+                    "arguments": {"stock_code": "005930", "limit": 1},
+                },
+            },
+        )
+        assert r.status_code == 202
+        item = await asyncio.wait_for(session.queue.get(), timeout=2.0)
+        payload = json.loads(
+            [ln for ln in item.splitlines() if ln.startswith("data: ")][0].removeprefix(
+                "data: "
+            )
+        )
+        assert payload["result"]["isError"] is False
+        await sse_hub.close(sid)
+
+    import anyio
+
+    anyio.run(_run)

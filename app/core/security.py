@@ -27,6 +27,8 @@ AUTH_EXEMPT_EXACT = {
     "/dashboard",
     "/api/v1/health",
     "/api/v1/auth/issue-key",
+    "/api/v1/auth/send-code",
+    "/api/v1/auth/verify-code",
     # MCP handshake / transport (must be public for Claude Desktop / mcp-remote)
     "/mcp",
     "/mcp/sse",

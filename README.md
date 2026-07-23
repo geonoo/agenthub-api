@@ -78,17 +78,39 @@ Docker 이미지 빌드 시 `test` 스테이지에서 `pytest`가 자동 실행�
 
 ---
 
-## API Key 셀프 발급 (SQLite)
+## API Key 셀프 발급 (이메일 인증 + SQLite)
 
-랜딩(https://agenthub.co.kr)에서 **API Key 즉시 발급 받기** 또는:
+1. 랜딩(https://agenthub.co.kr)에서 **API Key 발급** → 이메일 입력 → **인증번호 전송**
+2. 메일로 받은 6자리 코드 입력 → **인증 확인**
+3. **API Key 발급받기** (키는 한 번만 표시)
+
+API:
 
 ```bash
+# 1) 인증메일
+curl -X POST https://api.agenthub.co.kr/api/v1/auth/send-code \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com"}'
+
+# 2) 코드 확인
+curl -X POST https://api.agenthub.co.kr/api/v1/auth/verify-code \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","code":"123456"}'
+
+# 3) 키 발급 (인증 완료 후에만)
 curl -X POST https://api.agenthub.co.kr/api/v1/auth/issue-key \
   -H "Content-Type: application/json" \
   -d '{"email":"you@example.com"}'
 ```
 
-응답의 `api_key`(`ah_live_...`)는 **한 번만** 보여집니다. DB에는 SHA-256 해시만 저장됩니다.
+`.env`에 Resend 키 필요:
+
+```bash
+RESEND_API_KEY=re_xxxxx
+EMAIL_FROM=AgentHub <auth@agenthub.co.kr>
+```
+
+발신 도메인 `agenthub.co.kr`는 Resend에 인증되어 있어야 합니다.
 
 사용량 조회:
 
