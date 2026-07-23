@@ -8,7 +8,7 @@ from app.core.security import rate_limiter, verify_api_key
 
 
 @pytest.mark.asyncio
-async def test_verify_api_key_missing():
+async def test_verify_api_key_missing(settings):
     settings = Settings(api_key="secret", master_api_key="")
     with pytest.raises(HTTPException) as exc_info:
         await verify_api_key(api_key=None, settings=settings)
@@ -16,7 +16,7 @@ async def test_verify_api_key_missing():
 
 
 @pytest.mark.asyncio
-async def test_verify_api_key_invalid_returns_401():
+async def test_verify_api_key_invalid_returns_401(settings):
     settings = Settings(api_key="secret", master_api_key="master")
     with pytest.raises(HTTPException) as exc_info:
         await verify_api_key(api_key="nope", settings=settings)
@@ -24,7 +24,7 @@ async def test_verify_api_key_invalid_returns_401():
 
 
 @pytest.mark.asyncio
-async def test_verify_api_key_accepts_master_key():
+async def test_verify_api_key_accepts_master_key(settings):
     settings = Settings(api_key="secret", master_api_key="master-secret")
     result = await verify_api_key(api_key="master-secret", settings=settings)
     assert result == "master-secret"
@@ -59,6 +59,7 @@ def test_docs_and_static_are_public(client):
     assert client.get("/openapi.json").status_code == 200
     assert client.get("/").status_code == 200
     assert client.get("/static/index.html").status_code == 200
+    assert client.get("/dashboard").status_code == 200
 
 
 def test_rate_limit_middleware(client, auth_headers, monkeypatch):

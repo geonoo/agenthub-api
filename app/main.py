@@ -14,6 +14,7 @@ from app.api.v1 import api_router
 from app.api.v1.endpoints import mcp as mcp_endpoint
 from app.core.config import get_settings
 from app.core.security import APIKeyRateLimitMiddleware
+from app.db.session import init_db
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
@@ -21,6 +22,7 @@ STATIC_DIR = BASE_DIR / "static"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    init_db()
     yield
 
 
@@ -37,7 +39,6 @@ def create_application() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Middleware order: last added runs first for requests
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -48,7 +49,6 @@ def create_application() -> FastAPI:
     application.add_middleware(APIKeyRateLimitMiddleware)
 
     application.include_router(api_router, prefix=settings.api_v1_prefix)
-    # Top-level MCP JSON-RPC / SSE (Claude Desktop friendly)
     application.include_router(mcp_endpoint.router, prefix="/mcp", tags=["MCP"])
 
     if STATIC_DIR.is_dir():
@@ -57,6 +57,10 @@ def create_application() -> FastAPI:
     @application.get("/", include_in_schema=False)
     async def root() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
+
+    @application.get("/dashboard", include_in_schema=False)
+    async def dashboard() -> FileResponse:
+        return FileResponse(STATIC_DIR / "dashboard.html")
 
     @application.get("/favicon.ico", include_in_schema=False)
     async def favicon() -> Response:
@@ -82,8 +86,8 @@ def create_application() -> FastAPI:
             "in": "header",
             "name": "X-API-KEY",
             "description": (
-                "AgentHub API 키 (API_KEY 또는 MASTER_API_KEY). "
-                "health/docs/static 제외 경로에 필요합니다."
+                "AgentHub API 키. 랜딩에서 발급받거나 MASTER_API_KEY를 사용하세요. "
+                "health/docs/static/issue-key 제외."
             ),
         }
         openapi_schema["security"] = [{"ApiKeyAuth": []}]

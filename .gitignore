@@ -54,5 +54,11 @@ certbot/conf/**
 certbot/www/**
 !certbot/www/.gitkeep
 
+# SQLite data
+data/**
+!data/.gitkeep
+*.db
+*.db-*
+
 # Local overrides
 docker-compose.override.yml

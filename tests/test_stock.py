@@ -15,6 +15,9 @@ def test_root_landing(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "AgentHub" in response.text
+    assert "연동 가이드" in response.text
+    assert "mcpServers" in response.text
+    assert "Claude Desktop" in response.text
 
 
 def test_favicon(client):

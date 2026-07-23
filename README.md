@@ -18,18 +18,21 @@ agenthub-api/
 ├── app/
 │   ├── main.py                 # FastAPI 엔트리포인트 + 미들웨어
 │   ├── core/
-│   │   ├── config.py           # API_KEY / MASTER_API_KEY / Rate Limit
-│   │   └── security.py         # X-API-KEY + Rate Limit 미들웨어
+│   │   ├── config.py           # API_KEY / MASTER_API_KEY / Quota
+│   │   └── security.py         # X-API-KEY + 일일 쿼터 미들웨어
+│   ├── db/                     # SQLAlchemy + SQLite
 │   ├── api/v1/endpoints/
 │   │   ├── health.py
+│   │   ├── auth.py             # issue-key / usage
 │   │   ├── stock.py
 │   │   ├── dart.py
-│   │   ├── finance.py          # 네이버 금융 뉴스
-│   │   └── mcp.py              # MCP JSON-RPC / SSE
-│   ├── services/               # DART · Finance
+│   │   ├── finance.py
+│   │   └── mcp.py
+│   ├── services/
 │   └── schemas/
-├── static/                     # 랜딩 페이지
-├── tests/                      # pytest (Docker 빌드 시 자동 실행)
+├── static/                     # 랜딩 + dashboard
+├── data/                       # SQLite volume (./data:/app/data)
+├── tests/
 ├── nginx/default.conf
 ├── Dockerfile                  # build → pytest → runtime
 ├── docker-compose.yml
@@ -64,7 +67,8 @@ pytest -q
 | 파일 | 범위 |
 |------|------|
 | `tests/test_health.py` | 헬스 체크 |
-| `tests/test_auth.py` | X-API-KEY · MASTER_API_KEY · Rate Limit |
+| `tests/test_auth.py` | X-API-KEY · MASTER · burst limit |
+| `tests/test_key_issue.py` | 셀프 발급 · SHA-256 · 일일 쿼터 429 |
 | `tests/test_dart.py` | DART 정제 API |
 | `tests/test_finance.py` | 네이버 금융 뉴스 API |
 | `tests/test_mcp.py` | MCP tools/list · tools/call |
@@ -74,28 +78,53 @@ Docker 이미지 빌드 시 `test` 스테이지에서 `pytest`가 자동 실행�
 
 ---
 
+## API Key 셀프 발급 (SQLite)
+
+랜딩(https://agenthub.co.kr)에서 **API Key 즉시 발급 받기** 또는:
+
+```bash
+curl -X POST https://api.agenthub.co.kr/api/v1/auth/issue-key \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com"}'
+```
+
+응답의 `api_key`(`ah_live_...`)는 **한 번만** 보여집니다. DB에는 SHA-256 해시만 저장됩니다.
+
+사용량 조회:
+
+```bash
+curl -H "X-API-KEY: ah_live_..." https://api.agenthub.co.kr/api/v1/auth/usage
+```
+
+대시보드 UI: https://agenthub.co.kr/dashboard
+
+### Rate Limit / Quota
+
+| 구분 | 규칙 |
+|------|------|
+| Free Tier (발급 키) | **일 1,000회** (`FREE_TIER_DAILY_LIMIT`, UTC 일 기준) |
+| Burst | 기본 **60 req / 60s** (`RATE_LIMIT_*`) |
+| `MASTER_API_KEY` / `.env` `API_KEY` | 일일 쿼터 **무제한** (관리용) |
+| 한도 초과 | **429 Too Many Requests** |
+
+SQLite 파일: Docker volume `./data:/app/data` → `/app/data/agenthub.db` (WAL 모드)
+
+---
+
 ## X-API-KEY 인증
 
-보호된 API(`/api/v1/*` 중 health 제외, `/mcp`)는 헤더가 필요합니다.
+보호된 API는 헤더가 필요합니다.
 
 ```http
 X-API-KEY: <your-api-key>
 ```
 
-`.env` 설정:
-
-```bash
-API_KEY=클라이언트용_키
-MASTER_API_KEY=마스터_키   # 둘 다 유효. 하나만 써도 됨
-```
-
 | 경로 | 인증 |
 |------|------|
-| `/api/v1/health`, `/docs`, `/redoc`, `/openapi.json`, `/`, `/static/*` | 불필요 |
-| DART / Finance / Stock / MCP | 필수 |
+| `/`, `/dashboard`, `/docs`, `/redoc`, `/openapi.json`, `/static/*`, `/api/v1/health`, `/api/v1/auth/issue-key` | 불필요 |
+| DART / Finance / Stock / MCP / `auth/usage` | 필수 |
 
-잘못된·누락된 키 → **401 Unauthorized**  
-기본 Rate Limit → **60 req / 60s** (키당, `RATE_LIMIT_*`로 조정)
+잘못된·누락된 키 → **401 Unauthorized**
 
 ```bash
 curl -H "X-API-KEY: $API_KEY" \
@@ -254,12 +283,15 @@ docker compose down && docker compose up -d --build
 | Method | Path | Auth | 설명 |
 |--------|------|------|------|
 | GET | `/api/v1/health` | 없음 | 헬스 체크 |
+| POST | `/api/v1/auth/issue-key` | 없음 | API Key 셀프 발급 |
+| GET | `/api/v1/auth/usage` | X-API-KEY | 당일/월간 사용량 |
 | GET | `/api/v1/stock/summary?code=` | X-API-KEY | 종목 요약 (스텁) |
 | GET | `/api/v1/dart/company-disclosures` | X-API-KEY | DART 공시 정제 |
 | GET | `/api/v1/finance/news` | X-API-KEY | 네이버 금융 뉴스 정제 |
 | POST | `/mcp` | X-API-KEY | MCP JSON-RPC |
 | GET | `/mcp/tools` | X-API-KEY | MCP 도구 목록 |
 | GET | `/mcp/sse` | X-API-KEY | MCP SSE |
+| GET | `/dashboard` | 없음 | 사용량 대시보드 UI |
 
 ---
 

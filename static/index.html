@@ -57,6 +57,9 @@
       from { opacity: 0; transform: translateY(16px); }
       to { opacity: 1; transform: translateY(0); }
     }
+    pre code {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+    }
   </style>
 </head>
 <body class="h-full text-slate-200 font-sans antialiased">
@@ -68,8 +71,10 @@
           <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-accent/15 text-accent font-mono text-sm font-bold ring-1 ring-accent/30">AH</span>
           <span class="text-lg font-semibold tracking-tight text-white group-hover:text-accent transition-colors">AgentHub</span>
         </a>
-        <nav class="flex items-center gap-4 text-sm">
-          <a href="/redoc" class="text-slate-400 hover:text-white transition-colors hidden sm:inline">ReDoc</a>
+        <nav class="flex items-center gap-3 sm:gap-5 text-sm">
+          <button type="button" id="open-key-modal" class="text-slate-400 hover:text-white transition-colors">API Key 받기</button>
+          <a href="/dashboard" class="text-slate-400 hover:text-white transition-colors hidden sm:inline">대시보드</a>
+          <a href="#connect" class="text-slate-400 hover:text-white transition-colors hidden md:inline">연동 가이드</a>
           <a href="/docs" class="inline-flex items-center rounded-lg bg-accent px-3.5 py-1.5 font-medium text-ink-950 hover:bg-accent-dim transition-colors">API Docs</a>
         </nav>
       </div>
@@ -91,24 +96,25 @@
             DART 공시 정제, 네이버 크롤링, 금융 데이터를 LLM 토큰 90% 절감형 Clean JSON / Markdown으로 제공합니다.
           </p>
           <div class="mt-10 flex flex-wrap items-center gap-4">
-            <a
-              href="/docs"
+            <button
+              type="button"
+              id="open-key-modal-hero"
               class="inline-flex items-center gap-2 rounded-xl bg-accent px-6 py-3 text-sm sm:text-base font-semibold text-ink-950 shadow-glow hover:bg-accent-dim transition-colors"
             >
-              Swagger API Docs 보기
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
-              </svg>
-            </a>
-            <a href="/api/v1/health" class="text-sm text-slate-400 hover:text-white transition-colors font-mono">
-              GET /api/v1/health →
+              API Key 즉시 발급 받기
+            </button>
+            <a
+              href="/docs"
+              class="inline-flex items-center rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm text-slate-200 hover:border-accent/40 hover:text-white transition-colors"
+            >
+              Swagger API Docs
             </a>
           </div>
         </div>
       </section>
 
       <!-- Features -->
-      <section class="mx-auto max-w-6xl px-6 pb-24">
+      <section class="mx-auto max-w-6xl px-6 pb-20">
         <div class="grid gap-5 sm:grid-cols-3">
           <article class="fade-up fade-up-delay-1 rounded-2xl border border-white/8 bg-ink-900/80 p-6 hover:border-accent/30 hover:bg-ink-800/80 transition-colors">
             <div class="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent ring-1 ring-accent/20">
@@ -147,6 +153,165 @@
           </article>
         </div>
       </section>
+
+      <!-- Connect guide -->
+      <section id="connect" class="border-t border-white/5 bg-ink-900/40">
+        <div class="mx-auto max-w-6xl px-6 py-20">
+          <div class="max-w-2xl">
+            <p class="text-xs font-medium uppercase tracking-wider text-accent">Setup</p>
+            <h2 class="mt-2 text-2xl sm:text-3xl font-bold text-white tracking-tight">Claude · GPT 연동 따라하기</h2>
+            <p class="mt-3 text-slate-400 leading-relaxed">
+              기존 설정(<code class="text-slate-300">preferences</code> 등)은 그대로 두고,
+              <code class="text-slate-300">mcpServers</code>만 추가하면 됩니다. API 키는
+              <code class="text-slate-300">.env</code>의 <code class="text-slate-300">API_KEY</code>를 사용하세요.
+            </p>
+          </div>
+
+          <div class="mt-12 grid gap-8 lg:grid-cols-2">
+            <!-- Claude -->
+            <article class="rounded-2xl border border-white/8 bg-ink-950/70 p-6 sm:p-8">
+              <div class="flex items-center justify-between gap-3">
+                <h3 class="text-xl font-semibold text-white">Claude Desktop</h3>
+                <span class="rounded-md bg-accent/10 px-2 py-0.5 text-xs text-accent ring-1 ring-accent/20">MCP</span>
+              </div>
+
+              <ol class="mt-6 space-y-4 text-sm text-slate-300">
+                <li class="flex gap-3">
+                  <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink-700 text-xs font-mono text-accent">1</span>
+                  <span>Claude Desktop → <strong class="text-white">Settings → Developer → Edit Config</strong> 로
+                    <code class="text-accent/90">claude_desktop_config.json</code>을 엽니다.</span>
+                </li>
+                <li class="flex gap-3">
+                  <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink-700 text-xs font-mono text-accent">2</span>
+                  <span>이미 있는 <code class="text-slate-200">preferences</code> / <code class="text-slate-200">coworkUserFilesPath</code>는
+                    <strong class="text-white">지우지 말고</strong>, 맨 위에 <code class="text-slate-200">mcpServers</code> 블록만 추가합니다.</span>
+                </li>
+                <li class="flex gap-3">
+                  <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink-700 text-xs font-mono text-accent">3</span>
+                  <span><code class="text-slate-200">YOUR_API_KEY</code>를 실제 키로 바꾼 뒤 저장 → Claude <strong class="text-white">완전 종료 후 재실행</strong>.</span>
+                </li>
+                <li class="flex gap-3">
+                  <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink-700 text-xs font-mono text-accent">4</span>
+                  <span>새 채팅에서 도구 아이콘을 확인하고 물어보세요:
+                    <em class="text-slate-200">「삼성전자 최신 공시랑 뉴스 정리해줘」</em></span>
+                </li>
+              </ol>
+
+              <div class="mt-6">
+                <div class="mb-2 flex items-center justify-between">
+                  <p class="text-xs text-slate-500">추가할 JSON (기존 설정과 합친 예시)</p>
+                  <button type="button" data-copy="claude-config" class="copy-btn text-xs text-accent hover:text-white transition-colors">복사</button>
+                </div>
+                <pre id="claude-config" class="overflow-x-auto rounded-xl border border-white/10 bg-ink-950 p-4 text-[11px] sm:text-xs leading-relaxed text-slate-300"><code>{
+  "mcpServers": {
+    "agenthub": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://api.agenthub.co.kr/mcp/sse",
+        "--header",
+        "X-API-KEY: YOUR_API_KEY"
+      ]
+    }
+  },
+  "coworkUserFilesPath": "/Users/mailplug/Claude",
+  "preferences": { "...기존 preferences 그대로..." }
+}</code></pre>
+                <p class="mt-3 text-xs text-slate-500">
+                  Node.js가 필요합니다 (<code class="text-slate-400">npx</code>). macOS 경로 예:
+                  <code class="text-slate-400">~/Library/Application Support/Claude/claude_desktop_config.json</code>
+                </p>
+              </div>
+            </article>
+
+            <!-- GPT -->
+            <article class="rounded-2xl border border-white/8 bg-ink-950/70 p-6 sm:p-8">
+              <div class="flex items-center justify-between gap-3">
+                <h3 class="text-xl font-semibold text-white">ChatGPT (Custom GPT)</h3>
+                <span class="rounded-md bg-sky-500/10 px-2 py-0.5 text-xs text-sky-300 ring-1 ring-sky-500/20">Actions</span>
+              </div>
+
+              <ol class="mt-6 space-y-4 text-sm text-slate-300">
+                <li class="flex gap-3">
+                  <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink-700 text-xs font-mono text-sky-300">1</span>
+                  <span>ChatGPT → <strong class="text-white">Explore GPTs → Create a GPT → Configure → Actions</strong></span>
+                </li>
+                <li class="flex gap-3">
+                  <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink-700 text-xs font-mono text-sky-300">2</span>
+                  <span>Authentication: <strong class="text-white">API Key</strong> · Header 이름
+                    <code class="text-slate-200">X-API-KEY</code> · 값에 AgentHub API 키 입력</span>
+                </li>
+                <li class="flex gap-3">
+                  <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink-700 text-xs font-mono text-sky-300">3</span>
+                  <span>Schema에 OpenAPI URL을 Import 하거나 아래 스키마를 붙여넣습니다.</span>
+                </li>
+                <li class="flex gap-3">
+                  <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-ink-700 text-xs font-mono text-sky-300">4</span>
+                  <span>저장 후 GPT에게:
+                    <em class="text-slate-200">「삼성전자 최신 공시랑 뉴스 정리해줘」</em></span>
+                </li>
+              </ol>
+
+              <div class="mt-6 space-y-4">
+                <div>
+                  <div class="mb-2 flex items-center justify-between">
+                    <p class="text-xs text-slate-500">OpenAPI Import URL</p>
+                    <button type="button" data-copy="gpt-openapi-url" class="copy-btn text-xs text-sky-300 hover:text-white transition-colors">복사</button>
+                  </div>
+                  <pre id="gpt-openapi-url" class="overflow-x-auto rounded-xl border border-white/10 bg-ink-950 p-4 text-xs text-slate-300"><code>https://api.agenthub.co.kr/openapi.json</code></pre>
+                </div>
+                <div>
+                  <div class="mb-2 flex items-center justify-between">
+                    <p class="text-xs text-slate-500">권장 Instructions (GPT 프롬프트)</p>
+                    <button type="button" data-copy="gpt-instructions" class="copy-btn text-xs text-sky-300 hover:text-white transition-colors">복사</button>
+                  </div>
+                  <pre id="gpt-instructions" class="overflow-x-auto rounded-xl border border-white/10 bg-ink-950 p-4 text-[11px] sm:text-xs leading-relaxed text-slate-300 whitespace-pre-wrap"><code>당신은 한국 금융 데이터 어시스턴트입니다.
+종목 공시는 get_company_disclosures(DART), 뉴스는 get_finance_news Actions를 호출하세요.
+HTML이 아닌 Clean Markdown/JSON만 요약에 사용하고, 출처(접수번호·기사 제목)를 함께 적으세요.</code></pre>
+                </div>
+                <p class="text-xs text-slate-500">
+                  사용 엔드포인트:
+                  <code class="text-slate-400">/api/v1/dart/company-disclosures</code>,
+                  <code class="text-slate-400">/api/v1/finance/news</code>
+                </p>
+              </div>
+            </article>
+          </div>
+
+          <div class="mt-10 rounded-2xl border border-accent/20 bg-accent/5 p-5 sm:p-6">
+            <p class="text-sm text-slate-300">
+              <strong class="text-accent">팁:</strong> 지금 가진 설정 파일에
+              <code class="text-slate-200">mcpServers</code>가 없다면, 파일 <em>맨 위</em>에만 추가하면 됩니다.
+              <code class="text-slate-200">preferences</code> 블록은 그대로 두세요. 전체가 이렇게 됩니다:
+            </p>
+            <div class="mt-4">
+              <div class="mb-2 flex items-center justify-between">
+                <p class="text-xs text-slate-500">완성본 골격</p>
+                <button type="button" data-copy="merge-hint" class="copy-btn text-xs text-accent hover:text-white transition-colors">복사</button>
+              </div>
+              <pre id="merge-hint" class="overflow-x-auto rounded-xl border border-white/10 bg-ink-950 p-4 text-[11px] sm:text-xs leading-relaxed text-slate-300"><code>{
+  "mcpServers": {
+    "agenthub": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://api.agenthub.co.kr/mcp/sse",
+        "--header",
+        "X-API-KEY: YOUR_API_KEY"
+      ]
+    }
+  },
+  "coworkUserFilesPath": "/Users/mailplug/Claude",
+  "preferences": {
+    "sidebarMode": "chat"
+  }
+}</code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
 
     <!-- Footer -->
@@ -162,5 +327,138 @@
       </div>
     </footer>
   </div>
+
+  <!-- API Key modal -->
+  <div id="key-modal" class="fixed inset-0 z-[100] hidden items-center justify-center p-4">
+    <div id="key-modal-backdrop" class="absolute inset-0 bg-black/70 backdrop-blur-sm"></div>
+    <div class="relative w-full max-w-lg rounded-2xl border border-white/10 bg-ink-900 p-6 sm:p-8 shadow-glow">
+      <button type="button" id="close-key-modal" class="absolute right-4 top-4 text-slate-500 hover:text-white text-xl leading-none">&times;</button>
+      <h3 class="text-xl font-semibold text-white">API Key 즉시 발급</h3>
+      <p class="mt-2 text-sm text-slate-400">이메일만 입력하면 Free Tier 키(일 1,000회)가 발급됩니다. 키는 한 번만 보여집니다.</p>
+
+      <form id="issue-key-form" class="mt-6 space-y-4">
+        <div>
+          <label for="issue-email" class="block text-xs text-slate-500 mb-1">Email</label>
+          <input id="issue-email" type="email" required placeholder="you@example.com"
+            class="w-full rounded-xl border border-white/10 bg-ink-950 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-accent/40" />
+        </div>
+        <button type="submit" id="issue-submit"
+          class="w-full rounded-xl bg-accent py-3 text-sm font-semibold text-ink-950 hover:bg-accent-dim transition-colors">
+          API Key 발급
+        </button>
+        <p id="issue-error" class="hidden text-sm text-red-400"></p>
+      </form>
+
+      <div id="issue-result" class="mt-6 hidden space-y-4">
+        <div>
+          <div class="mb-1 flex items-center justify-between">
+            <p class="text-xs text-slate-500">발급된 API Key (지금만 표시)</p>
+            <button type="button" id="copy-issued-key" class="text-xs text-accent hover:text-white">복사</button>
+          </div>
+          <pre id="issued-key" class="overflow-x-auto rounded-xl border border-accent/30 bg-ink-950 p-3 text-xs text-accent break-all"></pre>
+        </div>
+        <div>
+          <div class="mb-1 flex items-center justify-between">
+            <p class="text-xs text-slate-500">Claude Desktop MCP 설정</p>
+            <button type="button" id="copy-mcp-snippet" class="text-xs text-accent hover:text-white">복사</button>
+          </div>
+          <pre id="mcp-snippet" class="overflow-x-auto rounded-xl border border-white/10 bg-ink-950 p-3 text-[11px] text-slate-300 leading-relaxed"></pre>
+        </div>
+        <a href="/dashboard" class="inline-flex text-sm text-accent hover:text-white">사용량 대시보드 →</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.querySelectorAll(".copy-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-copy");
+        const el = document.getElementById(id);
+        if (!el) return;
+        try {
+          await navigator.clipboard.writeText(el.innerText);
+          const prev = btn.textContent;
+          btn.textContent = "복사됨";
+          setTimeout(() => { btn.textContent = prev; }, 1500);
+        } catch (_) {
+          btn.textContent = "실패";
+        }
+      });
+    });
+
+    const modal = document.getElementById("key-modal");
+    const openers = [document.getElementById("open-key-modal"), document.getElementById("open-key-modal-hero")];
+    const closeBtn = document.getElementById("close-key-modal");
+    const backdrop = document.getElementById("key-modal-backdrop");
+
+    function openModal() {
+      modal.classList.remove("hidden");
+      modal.classList.add("flex");
+    }
+    function closeModal() {
+      modal.classList.add("hidden");
+      modal.classList.remove("flex");
+    }
+    openers.forEach((el) => el && el.addEventListener("click", openModal));
+    closeBtn.addEventListener("click", closeModal);
+    backdrop.addEventListener("click", closeModal);
+
+    const form = document.getElementById("issue-key-form");
+    const errEl = document.getElementById("issue-error");
+    const resultEl = document.getElementById("issue-result");
+    const keyEl = document.getElementById("issued-key");
+    const mcpEl = document.getElementById("mcp-snippet");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errEl.classList.add("hidden");
+      const email = document.getElementById("issue-email").value.trim();
+      const submit = document.getElementById("issue-submit");
+      submit.disabled = true;
+      submit.textContent = "발급 중…";
+      try {
+        const res = await fetch("/api/v1/auth/issue-key", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "발급 실패");
+        const key = data.api_key;
+        keyEl.textContent = key;
+        mcpEl.textContent = JSON.stringify({
+          mcpServers: {
+            agenthub: {
+              command: "npx",
+              args: [
+                "-y",
+                "mcp-remote",
+                "https://api.agenthub.co.kr/mcp/sse",
+                "--header",
+                "X-API-KEY: " + key
+              ]
+            }
+          }
+        }, null, 2);
+        resultEl.classList.remove("hidden");
+        try { localStorage.setItem("agenthub_api_key", key); } catch (_) {}
+      } catch (err) {
+        errEl.textContent = err.message || String(err);
+        errEl.classList.remove("hidden");
+      } finally {
+        submit.disabled = false;
+        submit.textContent = "API Key 발급";
+      }
+    });
+
+    document.getElementById("copy-issued-key").addEventListener("click", async () => {
+      await navigator.clipboard.writeText(keyEl.textContent);
+    });
+    document.getElementById("copy-mcp-snippet").addEventListener("click", async () => {
+      await navigator.clipboard.writeText(mcpEl.textContent);
+    });
+
+    if (location.hash === "#get-key") openModal();
+  </script>
 </body>
 </html>

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ko" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AgentHub — API 사용량 대시보드</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: { 950: '#07090f', 900: '#0c111b', 800: '#121826' },
+            accent: { DEFAULT: '#3ecf8e', dim: '#2aa86f' },
+          },
+        },
+      },
+    };
+  </script>
+</head>
+<body class="min-h-full bg-ink-950 text-slate-200 antialiased">
+  <header class="border-b border-white/5">
+    <div class="mx-auto max-w-3xl px-6 h-14 flex items-center justify-between">
+      <a href="/" class="font-semibold text-white">AgentHub</a>
+      <a href="/#get-key" class="text-sm text-accent hover:text-white">API Key 받기</a>
+    </div>
+  </header>
+  <main class="mx-auto max-w-3xl px-6 py-12">
+    <h1 class="text-2xl font-bold text-white">사용량 대시보드</h1>
+    <p class="mt-2 text-sm text-slate-400">발급받은 X-API-KEY로 당일/월간 사용량을 조회합니다. Free Tier 일 1,000회.</p>
+
+    <div class="mt-8 space-y-4">
+      <label class="block text-xs text-slate-500">X-API-KEY</label>
+      <input id="api-key-input" type="password" placeholder="ah_live_..."
+        class="w-full rounded-xl border border-white/10 bg-ink-900 px-4 py-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-accent/40" />
+      <button id="load-usage" type="button"
+        class="rounded-xl bg-accent px-5 py-2.5 text-sm font-semibold text-ink-950 hover:bg-accent-dim">조회</button>
+      <p id="dash-error" class="hidden text-sm text-red-400"></p>
+    </div>
+
+    <div id="usage-card" class="mt-8 hidden rounded-2xl border border-white/10 bg-ink-900 p-6 grid sm:grid-cols-2 gap-4">
+      <div><p class="text-xs text-slate-500">Key prefix</p><p id="u-prefix" class="font-mono text-white"></p></div>
+      <div><p class="text-xs text-slate-500">Plan</p><p id="u-plan" class="text-white"></p></div>
+      <div><p class="text-xs text-slate-500">오늘 사용</p><p id="u-today" class="text-2xl font-semibold text-accent"></p></div>
+      <div><p class="text-xs text-slate-500">오늘 잔여</p><p id="u-remain" class="text-2xl font-semibold text-white"></p></div>
+      <div><p class="text-xs text-slate-500">일일 한도</p><p id="u-limit" class="text-white"></p></div>
+      <div><p class="text-xs text-slate-500">이번 달 사용</p><p id="u-month" class="text-white"></p></div>
+    </div>
+  </main>
+  <script>
+    try {
+      const saved = localStorage.getItem("agenthub_api_key");
+      if (saved) document.getElementById("api-key-input").value = saved;
+    } catch (_) {}
+
+    document.getElementById("load-usage").addEventListener("click", async () => {
+      const key = document.getElementById("api-key-input").value.trim();
+      const err = document.getElementById("dash-error");
+      const card = document.getElementById("usage-card");
+      err.classList.add("hidden");
+      if (!key) {
+        err.textContent = "API Key를 입력하세요.";
+        err.classList.remove("hidden");
+        return;
+      }
+      try {
+        const res = await fetch("/api/v1/auth/usage", { headers: { "X-API-KEY": key } });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "조회 실패");
+        document.getElementById("u-prefix").textContent = data.key_prefix;
+        document.getElementById("u-plan").textContent = data.plan;
+        document.getElementById("u-today").textContent = data.used_today;
+        document.getElementById("u-remain").textContent =
+          data.remaining_today < 0 ? "무제한" : data.remaining_today;
+        document.getElementById("u-limit").textContent =
+          data.daily_limit < 0 ? "무제한" : data.daily_limit;
+        document.getElementById("u-month").textContent = data.used_month;
+        card.classList.remove("hidden");
+        try { localStorage.setItem("agenthub_api_key", key); } catch (_) {}
+      } catch (e) {
+        err.textContent = e.message || String(e);
+        err.classList.remove("hidden");
+        card.classList.add("hidden");
+      }
+    });
+  </script>
+</body>
+</html>

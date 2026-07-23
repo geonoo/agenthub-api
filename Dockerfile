@@ -13,7 +13,6 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 
-# Fail the image build if pytest fails
 FROM builder AS test
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -23,6 +22,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MASTER_API_KEY=test-master-key \
     DART_API_KEY=dummy-dart-key \
     RATE_LIMIT_ENABLED=false \
+    DATABASE_URL=sqlite:////tmp/agenthub-test.db \
     ENVIRONMENT=test
 
 WORKDIR /app
@@ -38,7 +38,8 @@ FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:$PATH"
+    PATH="/opt/venv/bin:$PATH" \
+    DATABASE_URL=sqlite:////app/data/agenthub.db
 
 WORKDIR /app
 
@@ -46,10 +47,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 1000 appuser \
-    && useradd --system --uid 1000 --gid appuser --home-dir /app --shell /sbin/nologin appuser
+    && useradd --system --uid 1000 --gid appuser --home-dir /app --shell /sbin/nologin appuser \
+    && mkdir -p /app/data \
+    && chown -R appuser:appuser /app/data
 
 COPY --from=builder /opt/venv /opt/venv
-# COPY from `test` so Docker must run the test stage successfully
 COPY --from=test --chown=appuser:appuser /app/app ./app
 COPY --from=test --chown=appuser:appuser /app/static ./static
 

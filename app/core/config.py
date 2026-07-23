@@ -1,6 +1,7 @@
 """Application settings loaded from environment variables."""
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -30,10 +31,16 @@ class Settings(BaseSettings):
     master_api_key: str = ""
     api_key_header: str = "X-API-KEY"
 
-    # Rate limit (per API key / IP)
+    # Burst rate limit (per key, in-memory) — in addition to daily quota
     rate_limit_enabled: bool = True
     rate_limit_requests: int = 60
     rate_limit_window_seconds: int = 60
+
+    # Free-tier daily quota for issued keys
+    free_tier_daily_limit: int = 1000
+
+    # SQLite
+    database_url: str = "sqlite:////app/data/agenthub.db"
 
     # CORS
     cors_origins: str = "https://agenthub.co.kr,https://api.agenthub.co.kr"
@@ -42,7 +49,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # Open DART (금융감독원 전자공시)
+    # Open DART
     dart_api_key: str = ""
 
     @property
@@ -50,12 +57,26 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     @property
-    def valid_api_keys(self) -> set[str]:
-        """Accepted X-API-KEY values (MASTER_API_KEY takes precedence alongside API_KEY)."""
-        keys = {self.api_key.strip()} if self.api_key.strip() else set()
+    def env_api_keys(self) -> set[str]:
+        """Bootstrap keys from env (unlimited quota)."""
+        keys: set[str] = set()
+        if self.api_key.strip():
+            keys.add(self.api_key.strip())
         if self.master_api_key.strip():
             keys.add(self.master_api_key.strip())
         return keys
+
+    @property
+    def valid_api_keys(self) -> set[str]:
+        """Backward-compatible alias for env keys."""
+        return self.env_api_keys
+
+    @property
+    def sqlite_path(self) -> Path | None:
+        if self.database_url.startswith("sqlite:///"):
+            raw = self.database_url.removeprefix("sqlite:///")
+            return Path(raw)
+        return None
 
 
 @lru_cache
