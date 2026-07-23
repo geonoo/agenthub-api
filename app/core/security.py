@@ -27,16 +27,33 @@ AUTH_EXEMPT_EXACT = {
     "/dashboard",
     "/api/v1/health",
     "/api/v1/auth/issue-key",
+    # MCP handshake / transport (must be public for Claude Desktop / mcp-remote)
+    "/mcp",
+    "/mcp/sse",
+    "/mcp/messages",
+    "/mcp/schema",
+    "/mcp/tools",
+    "/api/v1/mcp",
+    "/api/v1/mcp/sse",
+    "/api/v1/mcp/messages",
+    "/api/v1/mcp/schema",
+    "/api/v1/mcp/tools",
 }
 AUTH_EXEMPT_PREFIXES = (
     "/static",
     "/docs/",
     "/redoc/",
+    "/mcp/",
+    "/api/v1/mcp/",
 )
 
 
 def is_auth_exempt(path: str) -> bool:
     if path in AUTH_EXEMPT_EXACT:
+        return True
+    # Normalize trailing slash
+    trimmed = path.rstrip("/") or "/"
+    if trimmed in AUTH_EXEMPT_EXACT:
         return True
     return any(path.startswith(prefix) for prefix in AUTH_EXEMPT_PREFIXES)
 
@@ -128,6 +145,7 @@ class APIKeyRateLimitMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         if request.method == "OPTIONS" or is_auth_exempt(path):
+            # MCP / public routes: no auth, no DB, no quota accounting
             return await call_next(request)
 
         if not (path.startswith("/api/") or path.startswith("/mcp")):
