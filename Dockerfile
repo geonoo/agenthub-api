@@ -1,4 +1,4 @@
-# AgentHub API — multi-stage production image
+# AgentHub API — multi-stage: build → test → runtime
 FROM python:3.11-slim AS builder
 
 WORKDIR /build
@@ -11,6 +11,27 @@ COPY requirements.txt .
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
     && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+
+
+# Fail the image build if pytest fails
+FROM builder AS test
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    API_KEY=test-api-key-agenthub \
+    MASTER_API_KEY=test-master-key \
+    DART_API_KEY=dummy-dart-key \
+    RATE_LIMIT_ENABLED=false \
+    ENVIRONMENT=test
+
+WORKDIR /app
+COPY app ./app
+COPY static ./static
+COPY tests ./tests
+COPY pytest.ini .
+
+RUN pytest -q
 
 
 FROM python:3.11-slim AS runtime
@@ -28,8 +49,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --system --uid 1000 --gid appuser --home-dir /app --shell /sbin/nologin appuser
 
 COPY --from=builder /opt/venv /opt/venv
-COPY --chown=appuser:appuser app ./app
-COPY --chown=appuser:appuser static ./static
+# COPY from `test` so Docker must run the test stage successfully
+COPY --from=test --chown=appuser:appuser /app/app ./app
+COPY --from=test --chown=appuser:appuser /app/static ./static
 
 USER appuser
 

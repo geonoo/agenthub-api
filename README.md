@@ -6,7 +6,7 @@ LLM 에이전트 및 개발자를 위한 한국형 데이터/크롤링/정제 AP
 |------|-----|
 | 서비스 | [agenthub.co.kr](https://agenthub.co.kr) |
 | API 전용 | [api.agenthub.co.kr](https://api.agenthub.co.kr) |
-| Stack | FastAPI · Docker · Nginx · Let's Encrypt |
+| Stack | FastAPI · Docker · Nginx · Let's Encrypt · MCP |
 | Python | 3.11+ |
 
 ---
@@ -16,20 +16,23 @@ LLM 에이전트 및 개발자를 위한 한국형 데이터/크롤링/정제 AP
 ```text
 agenthub-api/
 ├── app/
-│   ├── main.py                 # FastAPI 엔트리포인트
+│   ├── main.py                 # FastAPI 엔트리포인트 + 미들웨어
 │   ├── core/
-│   │   ├── config.py           # 환경 설정 (pydantic-settings)
-│   │   └── security.py         # X-API-KEY 헤더 검증
+│   │   ├── config.py           # API_KEY / MASTER_API_KEY / Rate Limit
+│   │   └── security.py         # X-API-KEY + Rate Limit 미들웨어
 │   ├── api/v1/endpoints/
-│   │   ├── health.py           # GET /api/v1/health
-│   │   ├── stock.py            # GET /api/v1/stock/summary
-│   │   └── dart.py             # GET /api/v1/dart/company-disclosures
-│   ├── services/               # Open DART 등 외부 연동
-│   └── schemas/                # Pydantic 응답 모델
-├── nginx/default.conf          # reverse proxy + SSL
-├── Dockerfile                  # multi-stage (python:3.11-slim)
+│   │   ├── health.py
+│   │   ├── stock.py
+│   │   ├── dart.py
+│   │   ├── finance.py          # 네이버 금융 뉴스
+│   │   └── mcp.py              # MCP JSON-RPC / SSE
+│   ├── services/               # DART · Finance
+│   └── schemas/
+├── static/                     # 랜딩 페이지
+├── tests/                      # pytest (Docker 빌드 시 자동 실행)
+├── nginx/default.conf
+├── Dockerfile                  # build → pytest → runtime
 ├── docker-compose.yml
-├── requirements.txt
 └── .env.example
 ```
 
@@ -38,77 +41,166 @@ agenthub-api/
 ## 빠른 시작 (로컬)
 
 ```bash
-# 1) 환경 변수
 cp .env.example .env
-# API_KEY, DART_API_KEY 값을 설정하세요.
+# API_KEY, MASTER_API_KEY, DART_API_KEY 설정
 
-# 2) 의존성 (로컬 개발)
-python -m venv .venv
-source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 3) 실행
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
-- OpenAPI JSON: http://localhost:8000/openapi.json
+- MCP: `POST http://localhost:8000/mcp`
 
-### API 호출 예시
+### 테스트 (pytest)
 
 ```bash
-# Health (인증 불필요)
-curl http://localhost:8000/api/v1/health
-
-# Stock summary (X-API-KEY 필요)
-curl -H "X-API-KEY: change-me-in-production" \
-  "http://localhost:8000/api/v1/stock/summary?code=005930"
-
-# DART 공시 정제 (X-API-KEY + DART_API_KEY 필요)
-curl -H "X-API-KEY: change-me-in-production" \
-  "http://localhost:8000/api/v1/dart/company-disclosures?stock_code=005930&limit=3"
+pip install -r requirements.txt   # pytest / pytest-asyncio / httpx 포함
+pytest -q
 ```
+
+| 파일 | 범위 |
+|------|------|
+| `tests/test_health.py` | 헬스 체크 |
+| `tests/test_auth.py` | X-API-KEY · MASTER_API_KEY · Rate Limit |
+| `tests/test_dart.py` | DART 정제 API |
+| `tests/test_finance.py` | 네이버 금융 뉴스 API |
+| `tests/test_mcp.py` | MCP tools/list · tools/call |
+| `tests/test_stock.py` | 스톡 스텁 · 랜딩 · OpenAPI |
+
+Docker 이미지 빌드 시 `test` 스테이지에서 `pytest`가 자동 실행되며, 실패하면 빌드가 중단됩니다.
+
+---
+
+## X-API-KEY 인증
+
+보호된 API(`/api/v1/*` 중 health 제외, `/mcp`)는 헤더가 필요합니다.
+
+```http
+X-API-KEY: <your-api-key>
+```
+
+`.env` 설정:
+
+```bash
+API_KEY=클라이언트용_키
+MASTER_API_KEY=마스터_키   # 둘 다 유효. 하나만 써도 됨
+```
+
+| 경로 | 인증 |
+|------|------|
+| `/api/v1/health`, `/docs`, `/redoc`, `/openapi.json`, `/`, `/static/*` | 불필요 |
+| DART / Finance / Stock / MCP | 필수 |
+
+잘못된·누락된 키 → **401 Unauthorized**  
+기본 Rate Limit → **60 req / 60s** (키당, `RATE_LIMIT_*`로 조정)
+
+```bash
+curl -H "X-API-KEY: $API_KEY" \
+  "https://api.agenthub.co.kr/api/v1/stock/summary?code=005930"
+```
+
+Swagger **Authorize**에도 동일 키를 입력하면 됩니다.
 
 ---
 
 ## DART 공시 정제 API
 
-HTML/XML 노이즈를 제거한 Clean Markdown + 구조화 JSON으로 최근 공시를 반환합니다. LLM Function Calling / MCP 도구로 쓰기 좋게 OpenAPI `summary`·`description`·Query `Field(description=...)`를 맞춰 두었습니다.
+| 항목 | 값 |
+|------|-----|
+| Path | `GET /api/v1/dart/company-disclosures` |
+| Query | `stock_code` (6자리), `limit` (기본 5) |
+| Auth | X-API-KEY |
+| Upstream | `.env`의 `DART_API_KEY` ([Open DART](https://opendart.fss.or.kr/) 발급) |
+
+```bash
+curl -H "X-API-KEY: $API_KEY" \
+  "https://api.agenthub.co.kr/api/v1/dart/company-disclosures?stock_code=005930&limit=3"
+```
+
+---
+
+## 네이버 금융 뉴스 API
+
+종목 뉴스를 크롤링한 뒤 광고/스크립트를 제거하고 Clean Markdown으로 반환합니다.
 
 | 항목 | 값 |
 |------|-----|
-| Method / Path | `GET /api/v1/dart/company-disclosures` |
-| Auth | `X-API-KEY` 헤더 |
-| Query | `stock_code` (6자리 종목코드), `limit` (기본 5, 최대 20) |
-
-### `DART_API_KEY` 설정
-
-1. [Open DART](https://opendart.fss.or.kr/)에서 인증키를 발급받습니다.
-2. `.env`에 추가합니다.
+| Path | `GET /api/v1/finance/news` |
+| Query | `stock_code` (6자리), `limit` (기본 5) |
+| Auth | X-API-KEY |
 
 ```bash
-DART_API_KEY=발급받은_오픈다트_인증키
+curl -H "X-API-KEY: $API_KEY" \
+  "https://api.agenthub.co.kr/api/v1/finance/news?stock_code=005930&limit=5"
 ```
 
-3. Docker 사용 시 키 변경 후 컨테이너를 재생성합니다.
+---
+
+## MCP (Claude Desktop / MCP 클라이언트)
+
+JSON-RPC 엔드포인트: `POST /mcp` (동일 기능 `POST /api/v1/mcp`)
+
+| Tool | 설명 |
+|------|------|
+| `get_dart_disclosures` | DART 공시 Clean Markdown/JSON |
+| `get_stock_news` | 네이버 금융 뉴스 Clean Markdown |
+
+### 호출 예시
 
 ```bash
-docker compose up -d --force-recreate fastapi-app
+# tools/list
+curl -H "X-API-KEY: $API_KEY" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  https://api.agenthub.co.kr/mcp
+
+# tools/call — get_stock_news
+curl -H "X-API-KEY: $API_KEY" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_stock_news","arguments":{"stock_code":"005930","limit":3}}}' \
+  https://api.agenthub.co.kr/mcp
 ```
 
-키가 없으면 해당 엔드포인트는 `503`을 반환합니다. AgentHub의 `API_KEY`(클라이언트용)와 Open DART의 `DART_API_KEY`(업스트림용)는 서로 다른 키입니다.
+SSE 핸드셰이크: `GET /mcp/sse` (X-API-KEY 필요)
 
-### 응답 개요
+### Claude Desktop 설정 예시
 
-- 공시 메타데이터 (접수번호, 보고서명, 제출일 등)
-- `content_markdown`: style/script/주석 제거 + 표는 Markdown 테이블로 변환된 본문
-- `structured_metrics`: 매출·영업이익 등 휴리스틱으로 추출한 핵심 수치 JSON
+`claude_desktop_config.json`에 MCP 서버를 등록합니다. HTTP MCP를 지원하는 클라이언트/브리지에서는 아래를 참고하세요.
 
-```bash
-curl -H "X-API-KEY: <your-api-key>" \
-  "https://api.agenthub.co.kr/api/v1/dart/company-disclosures?stock_code=005930&limit=5"
+```json
+{
+  "mcpServers": {
+    "agenthub": {
+      "url": "https://api.agenthub.co.kr/mcp",
+      "headers": {
+        "X-API-KEY": "YOUR_AGENTHUB_API_KEY"
+      }
+    }
+  }
+}
 ```
+
+stdio 브리지(예: `mcp-remote` 등)를 쓰는 경우:
+
+```json
+{
+  "mcpServers": {
+    "agenthub": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://api.agenthub.co.kr/mcp",
+        "--header",
+        "X-API-KEY: YOUR_AGENTHUB_API_KEY"
+      ]
+    }
+  }
+}
+```
+
+도구 목록만 REST로 확인할 때: `GET /mcp/tools`
 
 ---
 
@@ -116,83 +208,34 @@ curl -H "X-API-KEY: <your-api-key>" \
 
 ```bash
 cp .env.example .env
-# .env 의 API_KEY, DART_API_KEY 수정
+# API_KEY, MASTER_API_KEY, DART_API_KEY 설정
 
-docker compose up -d --build
+docker compose down && docker compose up -d --build
 ```
 
-컨테이너:
+빌드 중 pytest가 통과해야 이미지가 생성됩니다.
 
 | 서비스 | 역할 |
 |--------|------|
 | `fastapi-app` | Uvicorn + FastAPI (내부 8000) |
-| `nginx` | TLS 종료 · reverse proxy (80/443) |
-| `certbot` | Let's Encrypt 발급/갱신 (`--profile certs`) |
+| `nginx` | TLS · reverse proxy (80/443) |
+| `certbot` | Let's Encrypt (`--profile certs`) |
 
 ---
 
-## OCI (Oracle Cloud Infrastructure) 배포 안내
+## OCI 배포 요약
 
-1. **컴퓨트**  
-   Ubuntu 22.04+ VM을 생성하고 Public IP를 할당합니다. Security List / NSG에서 **TCP 80, 443** 인바운드를 허용하세요.
+1. Ubuntu VM + Security List **80/443** 개방  
+2. DNS: `agenthub.co.kr`, `api.agenthub.co.kr` → Public IP  
+3. Docker 설치 후 코드 clone · `.env` 설정  
+4. Let's Encrypt 발급 후 `docker compose up -d --build`  
+5. `curl https://api.agenthub.co.kr/api/v1/health`
 
-2. **DNS**  
-   `agenthub.co.kr`, `api.agenthub.co.kr` A 레코드를 VM Public IP로 지정합니다.
+상세 절차는 저장소 내 기존 OCI 절을 따릅니다. 인증서 갱신 cron 예시:
 
-3. **Docker 설치**
-
-   ```bash
-   sudo apt update && sudo apt install -y docker.io docker-compose-v2
-   sudo usermod -aG docker $USER
-   ```
-
-4. **코드 배포**
-
-   ```bash
-   git clone <repo-url> /opt/agenthub-api
-   cd /opt/agenthub-api
-   cp .env.example .env
-   # API_KEY, DART_API_KEY 등 설정
+```bash
+0 3 * * * cd /opt/agenthub-api && docker compose run --rm certbot renew && docker compose exec nginx nginx -s reload
 ```
-
-5. **Let's Encrypt 인증서 (최초 1회)**  
-   SSL 파일이 없으면 Nginx가 기동에 실패할 수 있으므로, 최초에는 HTTP(ACME)만 허용하거나 임시 self-signed로 부팅한 뒤 certbot을 실행하세요.
-
-   ```bash
-   mkdir -p certbot/conf certbot/www
-
-   # HTTP로 앱만 먼저 올린 뒤 (필요 시 nginx conf의 SSL 블록을 잠시 주석 처리):
-   docker compose run --rm --entrypoint certbot certbot certonly \
-     --webroot -w /var/www/certbot \
-     -d agenthub.co.kr -d api.agenthub.co.kr \
-     --email admin@agenthub.co.kr --agree-tos --no-eff-email
-
-   docker compose up -d --build
-   ```
-
-6. **인증서 갱신 (cron 예시)**
-
-   ```bash
-   0 3 * * * cd /opt/agenthub-api && docker compose run --rm certbot renew && docker compose exec nginx nginx -s reload
-   ```
-
-7. **헬스 확인**
-
-   ```bash
-   curl https://api.agenthub.co.kr/api/v1/health
-   ```
-
----
-
-## 인증
-
-보호된 엔드포인트는 `X-API-KEY` 헤더가 필요합니다.
-
-```http
-X-API-KEY: <your-api-key>
-```
-
-키는 `.env`의 `API_KEY`로 설정합니다. Swagger UI(`/docs`) 우측 상단 **Authorize**에서 키를 입력할 수 있습니다.
 
 ---
 
@@ -204,9 +247,6 @@ X-API-KEY: <your-api-key>
 | ReDoc | https://api.agenthub.co.kr/redoc |
 | OpenAPI | https://api.agenthub.co.kr/openapi.json |
 
-Title: **AgentHub API Service**  
-Description: LLM 에이전트 및 개발자를 위한 한국형 데이터/크롤링/정제 API 허브
-
 ---
 
 ## 엔드포인트
@@ -215,7 +255,11 @@ Description: LLM 에이전트 및 개발자를 위한 한국형 데이터/크롤
 |--------|------|------|------|
 | GET | `/api/v1/health` | 없음 | 헬스 체크 |
 | GET | `/api/v1/stock/summary?code=` | X-API-KEY | 종목 요약 (스텁) |
-| GET | `/api/v1/dart/company-disclosures?stock_code=` | X-API-KEY | DART 공시 Clean Markdown/JSON 정제 |
+| GET | `/api/v1/dart/company-disclosures` | X-API-KEY | DART 공시 정제 |
+| GET | `/api/v1/finance/news` | X-API-KEY | 네이버 금융 뉴스 정제 |
+| POST | `/mcp` | X-API-KEY | MCP JSON-RPC |
+| GET | `/mcp/tools` | X-API-KEY | MCP 도구 목록 |
+| GET | `/mcp/sse` | X-API-KEY | MCP SSE |
 
 ---
 

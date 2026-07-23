@@ -24,10 +24,16 @@ class Settings(BaseSettings):
     debug: bool = False
     environment: str = "production"
 
-    # API
+    # API auth
     api_v1_prefix: str = "/api/v1"
     api_key: str = "change-me-in-production"
+    master_api_key: str = ""
     api_key_header: str = "X-API-KEY"
+
+    # Rate limit (per API key / IP)
+    rate_limit_enabled: bool = True
+    rate_limit_requests: int = 60
+    rate_limit_window_seconds: int = 60
 
     # CORS
     cors_origins: str = "https://agenthub.co.kr,https://api.agenthub.co.kr"
@@ -42,6 +48,14 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def valid_api_keys(self) -> set[str]:
+        """Accepted X-API-KEY values (MASTER_API_KEY takes precedence alongside API_KEY)."""
+        keys = {self.api_key.strip()} if self.api_key.strip() else set()
+        if self.master_api_key.strip():
+            keys.add(self.master_api_key.strip())
+        return keys
 
 
 @lru_cache

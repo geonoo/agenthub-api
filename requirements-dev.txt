@@ -1,0 +1,2 @@
+# Dev extras (same test stack as requirements.txt + local helpers)
+-r requirements.txt

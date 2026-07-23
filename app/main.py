@@ -11,7 +11,9 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1 import api_router
+from app.api.v1.endpoints import mcp as mcp_endpoint
 from app.core.config import get_settings
+from app.core.security import APIKeyRateLimitMiddleware
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
@@ -19,9 +21,7 @@ STATIC_DIR = BASE_DIR / "static"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    # Startup hooks (DB, cache, clients) can be added here.
     yield
-    # Shutdown hooks
 
 
 def create_application() -> FastAPI:
@@ -37,6 +37,7 @@ def create_application() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Middleware order: last added runs first for requests
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -44,8 +45,11 @@ def create_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    application.add_middleware(APIKeyRateLimitMiddleware)
 
     application.include_router(api_router, prefix=settings.api_v1_prefix)
+    # Top-level MCP JSON-RPC / SSE (Claude Desktop friendly)
+    application.include_router(mcp_endpoint.router, prefix="/mcp", tags=["MCP"])
 
     if STATIC_DIR.is_dir():
         application.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -59,7 +63,6 @@ def create_application() -> FastAPI:
         favicon_path = STATIC_DIR / "favicon.ico"
         if favicon_path.is_file():
             return FileResponse(favicon_path)
-        # Minimal empty 204 when no favicon asset is present
         return Response(status_code=204)
 
     def custom_openapi():
@@ -78,9 +81,11 @@ def create_application() -> FastAPI:
             "type": "apiKey",
             "in": "header",
             "name": "X-API-KEY",
-            "description": "AgentHub API 키를 X-API-KEY 헤더에 넣어 주세요.",
+            "description": (
+                "AgentHub API 키 (API_KEY 또는 MASTER_API_KEY). "
+                "health/docs/static 제외 경로에 필요합니다."
+            ),
         }
-        # Apply security globally in docs (health may still omit via endpoint config)
         openapi_schema["security"] = [{"ApiKeyAuth": []}]
         application.openapi_schema = openapi_schema
         return application.openapi_schema

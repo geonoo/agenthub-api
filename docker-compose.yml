@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     container_name: agenthub-api
     restart: unless-stopped
     env_file:
@@ -10,6 +11,11 @@ services:
     environment:
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - API_KEY=${API_KEY:-change-me-in-production}
+      - MASTER_API_KEY=${MASTER_API_KEY:-}
+      - DART_API_KEY=${DART_API_KEY:-}
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
+      - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-60}
+      - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-60}
       - CORS_ORIGINS=${CORS_ORIGINS:-https://agenthub.co.kr,https://api.agenthub.co.kr}
     expose:
       - "8000"
@@ -39,10 +45,6 @@ services:
     networks:
       - agenthub-net
 
-  # Optional: certificate issuance / renewal helper
-  # Usage:
-  #   docker compose run --rm certbot certonly --webroot -w /var/www/certbot \
-  #     -d agenthub.co.kr -d api.agenthub.co.kr --email you@example.com --agree-tos
   certbot:
     image: certbot/certbot:latest
     container_name: agenthub-certbot
