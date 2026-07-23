@@ -1,9 +1,5 @@
-"""API v1 router aggregation."""
+"""API v1 package — re-export router for app.main imports."""
 
-from fastapi import APIRouter
+from app.api.v1.router import api_router
 
-from app.api.v1.endpoints import health, stock
-
-api_router = APIRouter()
-api_router.include_router(health.router, tags=["Health"])
-api_router.include_router(stock.router, prefix="/stock", tags=["Stock"])
+__all__ = ["api_router"]

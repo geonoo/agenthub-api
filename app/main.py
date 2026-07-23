@@ -2,13 +2,19 @@
 
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1 import api_router
 from app.core.config import get_settings
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+STATIC_DIR = BASE_DIR / "static"
 
 
 @asynccontextmanager
@@ -40,6 +46,21 @@ def create_application() -> FastAPI:
     )
 
     application.include_router(api_router, prefix=settings.api_v1_prefix)
+
+    if STATIC_DIR.is_dir():
+        application.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+    @application.get("/", include_in_schema=False)
+    async def root() -> FileResponse:
+        return FileResponse(STATIC_DIR / "index.html")
+
+    @application.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> Response:
+        favicon_path = STATIC_DIR / "favicon.ico"
+        if favicon_path.is_file():
+            return FileResponse(favicon_path)
+        # Minimal empty 204 when no favicon asset is present
+        return Response(status_code=204)
 
     def custom_openapi():
         if application.openapi_schema:

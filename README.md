@@ -22,7 +22,9 @@ agenthub-api/
 │   │   └── security.py         # X-API-KEY 헤더 검증
 │   ├── api/v1/endpoints/
 │   │   ├── health.py           # GET /api/v1/health
-│   │   └── stock.py            # GET /api/v1/stock/summary
+│   │   ├── stock.py            # GET /api/v1/stock/summary
+│   │   └── dart.py             # GET /api/v1/dart/company-disclosures
+│   ├── services/               # Open DART 등 외부 연동
 │   └── schemas/                # Pydantic 응답 모델
 ├── nginx/default.conf          # reverse proxy + SSL
 ├── Dockerfile                  # multi-stage (python:3.11-slim)
@@ -38,7 +40,7 @@ agenthub-api/
 ```bash
 # 1) 환경 변수
 cp .env.example .env
-# API_KEY 값을 안전한 값으로 변경하세요.
+# API_KEY, DART_API_KEY 값을 설정하세요.
 
 # 2) 의존성 (로컬 개발)
 python -m venv .venv
@@ -62,6 +64,50 @@ curl http://localhost:8000/api/v1/health
 # Stock summary (X-API-KEY 필요)
 curl -H "X-API-KEY: change-me-in-production" \
   "http://localhost:8000/api/v1/stock/summary?code=005930"
+
+# DART 공시 정제 (X-API-KEY + DART_API_KEY 필요)
+curl -H "X-API-KEY: change-me-in-production" \
+  "http://localhost:8000/api/v1/dart/company-disclosures?stock_code=005930&limit=3"
+```
+
+---
+
+## DART 공시 정제 API
+
+HTML/XML 노이즈를 제거한 Clean Markdown + 구조화 JSON으로 최근 공시를 반환합니다. LLM Function Calling / MCP 도구로 쓰기 좋게 OpenAPI `summary`·`description`·Query `Field(description=...)`를 맞춰 두었습니다.
+
+| 항목 | 값 |
+|------|-----|
+| Method / Path | `GET /api/v1/dart/company-disclosures` |
+| Auth | `X-API-KEY` 헤더 |
+| Query | `stock_code` (6자리 종목코드), `limit` (기본 5, 최대 20) |
+
+### `DART_API_KEY` 설정
+
+1. [Open DART](https://opendart.fss.or.kr/)에서 인증키를 발급받습니다.
+2. `.env`에 추가합니다.
+
+```bash
+DART_API_KEY=발급받은_오픈다트_인증키
+```
+
+3. Docker 사용 시 키 변경 후 컨테이너를 재생성합니다.
+
+```bash
+docker compose up -d --force-recreate fastapi-app
+```
+
+키가 없으면 해당 엔드포인트는 `503`을 반환합니다. AgentHub의 `API_KEY`(클라이언트용)와 Open DART의 `DART_API_KEY`(업스트림용)는 서로 다른 키입니다.
+
+### 응답 개요
+
+- 공시 메타데이터 (접수번호, 보고서명, 제출일 등)
+- `content_markdown`: style/script/주석 제거 + 표는 Markdown 테이블로 변환된 본문
+- `structured_metrics`: 매출·영업이익 등 휴리스틱으로 추출한 핵심 수치 JSON
+
+```bash
+curl -H "X-API-KEY: <your-api-key>" \
+  "https://api.agenthub.co.kr/api/v1/dart/company-disclosures?stock_code=005930&limit=5"
 ```
 
 ---
@@ -70,7 +116,7 @@ curl -H "X-API-KEY: change-me-in-production" \
 
 ```bash
 cp .env.example .env
-# .env 의 API_KEY 수정
+# .env 의 API_KEY, DART_API_KEY 수정
 
 docker compose up -d --build
 ```
@@ -106,8 +152,8 @@ docker compose up -d --build
    git clone <repo-url> /opt/agenthub-api
    cd /opt/agenthub-api
    cp .env.example .env
-   # API_KEY 등 설정
-   ```
+   # API_KEY, DART_API_KEY 등 설정
+```
 
 5. **Let's Encrypt 인증서 (최초 1회)**  
    SSL 파일이 없으면 Nginx가 기동에 실패할 수 있으므로, 최초에는 HTTP(ACME)만 허용하거나 임시 self-signed로 부팅한 뒤 certbot을 실행하세요.
@@ -169,6 +215,7 @@ Description: LLM 에이전트 및 개발자를 위한 한국형 데이터/크롤
 |--------|------|------|------|
 | GET | `/api/v1/health` | 없음 | 헬스 체크 |
 | GET | `/api/v1/stock/summary?code=` | X-API-KEY | 종목 요약 (스텁) |
+| GET | `/api/v1/dart/company-disclosures?stock_code=` | X-API-KEY | DART 공시 Clean Markdown/JSON 정제 |
 
 ---
 

@@ -29,6 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=appuser:appuser app ./app
+COPY --chown=appuser:appuser static ./static
 
 USER appuser
 
