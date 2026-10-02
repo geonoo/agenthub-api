@@ -314,9 +314,3 @@ docker compose down && docker compose up -d --build
 | GET | `/mcp/tools` | X-API-KEY | MCP 도구 목록 |
 | GET | `/mcp/sse` | X-API-KEY | MCP SSE |
 | GET | `/dashboard` | 없음 | 사용량 대시보드 UI |
-
----
-
-## 라이선스
-
-Private — AgentHub
